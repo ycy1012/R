@@ -1,0 +1,292 @@
+---
+title: "StatComp Project 1: Simulation and sampling"
+author: "Chenyao Yu (s2156882)"
+output:
+  html_document:
+    number_sections: yes
+  pdf_document:
+    number_sections: yes
+header-includes:
+  - \newcommand{\bm}[1]{\boldsymbol{#1}}
+  - \newcommand{\mat}[1]{\begin{bmatrix}#1\end{bmatrix}}
+---
+
+```{r setup, include = FALSE}
+# Modify this setup code chunk to set options
+# or add extra packages etc if needed.
+# See the project instructions for more details
+# on what code to show, and where/how.
+
+# Set default code chunk options
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE
+)
+
+suppressPackageStartupMessages(library(tidyverse))
+theme_set(theme_bw())
+suppressPackageStartupMessages(library(StatCompLab))
+
+# To give the same random number sequence every time the document is knit:ed,
+# making it easier to discuss the specific numbers in the text:
+set.seed(12345L)
+```
+
+```{r code=readLines("code1.R"), eval=TRUE, echo=FALSE}
+# Do not change this code chunk
+# Load function definitions
+source("code1.R")
+```
+
+
+# Confidence interval approximation assessment
+
+#1.1 Define estimate_coverage function and the confidence interval
+
+We use the confidence interval function from LAB4, and use it to form a new function estimate_coverage. 
+For all N, we create a loop in poisson model and preserve the vectors whose lambda satisfies the condition that it is between the confidence interval.
+By using the params below to define the estimate _coverage function:
+CI: a function object for confidence interval construction
+N: the number of simulation replications to use for the coverage estimate
+alpha: 1-alpha is the intended coverage probability
+n: the sample size
+lambda: the true lambda values for the Poisson model
+
+#1.2 When n = 2
+
+Then run the coverage estimation for different combinations of model parameters λ and n (fix N = 10000 and α = 0.1). In this case, view lambda as variable. Here, we assumed that lambda is a sequence changing from 0.1 to 10. Hence, the graph below shows when n = 2, the relationship between different value of lambda and its estimated coverage by using loop. And the red line here shows the 90% confidence interval, which enables us to compare whether the coverage of the intervals achieve the desired confidence level.
+
+```{r, echo=FALSE}
+# view lambda as variable
+lambda_vec <- seq(0.1, 10, 0.1)
+est_coverage_vec <- c()
+
+for (lambda in lambda_vec) {
+  est_coverage_vec <- c(
+    est_coverage_vec,
+    estimate_coverage(CI1, 10000, 0.1, 2, lambda = lambda)
+  )
+}
+
+plot(lambda_vec, est_coverage_vec,
+     type = "l", ylim = c(0, 1),
+     xlab = "lambda",
+     ylab = "Estimated Coverage",
+     main = "fix n = 2")
+abline(h = 0.9, col = "red", lty = 2)
+```
+
+
+<br />
+#1.3 When lambda = 3 
+
+In this case, view n as variable. Here, we assumed that the value of n is from 1 to 20. Hence, the graph below shows when lambda = 3, the relationship between different value of n and its estimated coverage by using loop. And the red line here shows the 90% confidence interval, which enables us to compare whether the coverage of the intervals achieve the desired confidence level.
+
+```{r, echo=FALSE}
+n_vec <- 1:20
+est_coverage_vec <- c()
+
+for (n in n_vec) {
+  est_coverage_vec <- c(
+    est_coverage_vec,
+    estimate_coverage(CI1, 10000, 0.1, n, 3)
+  )
+}
+
+plot(n_vec, est_coverage_vec,
+     type = "l", ylim = c(0, 1),
+     xlab = "n",
+     ylab = "Estimated Coverage",
+     main = "fix lambda = 3")
+abline(h = 0.9, col = "red", lty = 2)
+```
+
+
+<br />
+# Discuss
+
+We can see from the first plot that the estimated coverage of the intervals is far less than the desired 90\% confidence interval when lambda is small. This is because in this case the value of n is fixed to 2, which is quite small; and when the value of lambda is also small (less than about 1), the approximation would not be accurate.\
+For the second plot, we can tell that the estimated coverage of the intervals is less than the desired 90\% confidence interval when n is small (less than 5). This is because the the standard error of lambda hat would be big if n is not great enough. Hence, the interval coverage estimation does not make much sense when n and lambda are small; i.e., in ideal case we should use both big n and big lambda to get accurate estimation.
+
+
+# 3D printer materials prediction
+
+The aim is to estimate the parameters of a Bayesian statistical model of material use in a 3D printer. First, upload the data in filament1 from the package and plot it by ggplot. The following graph shows the data.
+
+```{r, echo=FALSE}
+library(StatCompLab)
+library(tidyverse)
+data("filament1", package = "StatCompLab")
+ggplot(filament1, aes(CAD_Weight, Actual_Weight, colour = Material)) +
+  geom_point() +
+  theme_bw()
+```
+<br />
+#2.1 Prior density
+
+The log_prior_density function is the joint prior density p(θ) for the four θi parameters. And we know that theta1 and theta2 are Normal Distribution; while theta3 and theta4 are logarithm of an exponentially distributed random variable. Thus mention each prior density function for each theta with its corresponding distribution form, then plus them together to get the log_joint_prior_density function.
+
+```{r, echo=FALSE}
+dlogexp <- function(x, rate = 1, log = FALSE) {
+  result <- log(rate) + x - rate * exp(x)
+  if (!log) {
+    exp(result)
+  }
+  result
+}
+
+# p(theta)
+log_prior_density <- function(theta, params) {
+  prior_theta1 <- dnorm(theta[1], mean = 0, sd = sqrt(params[1]), log = T)
+  prior_theta2 <- dnorm(theta[2], mean = 1, sd = sqrt(params[2]), log = T)
+  prior_theta3 <- dlogexp(theta[3], params[3], log = T)
+  prior_theta4 <- dlogexp(theta[4], params[4], log = T)
+  log_joint_prior_density <- prior_theta1 + prior_theta2 + prior_theta3 + prior_theta4
+  return(log_joint_prior_density)
+}
+```
+
+#2.2 Observation likelihood
+
+In order to get the Observation likelihood p(y|theta), first define the function log_like. Since the formula of the likelihood is the multiply of the density function. Thus the log likelihood is the sum of log density function by the log rule. And since yi ∼ Normal[β1 + β2xi, β3 + β4xi^2], which means that the mean is the $\beta 1 + \beta  2\cdot x$ and the standard deviation is $\sqrt(β3 + β4\cdot xi^2)$
+
+```{r,echo=FALSE}
+log_like <- function(theta, x, y) {
+  log_like_function <- sum(
+    dnorm(y,
+          mean = theta[1] + theta[2] %*% x,
+          sd = sqrt(exp(theta[3]) + exp(theta[4]) %*% (x ^ 2)),
+          log = T)
+  )
+  return(log_like_function)
+}
+```
+
+#2.3 Posterior density
+
+Here, we need to define a new function called the log_posterior_density function. From the formula, we know that the $$p(\theta|y) = p(\theta)\times p(y|\theta)/p(y)$$ and in this case, we ignore p(y) since we are only interested in the posterior density up to some constant as stated in the question. Moreover, from the previous questions, we have log likelihood function and log prior density function. Thus, follow the log rule, in order to get the log posterior density function, we just need to plus log likelihood function and log prior density function.
+
+```{r, echo=FALSE}
+log_posterior_density <- function(theta, x, y, params) {
+  log_likehood <- log_like(theta, x, y)
+  log_priordensity <- log_prior_density(theta, params)
+  log_posterior_function <- log_likehood + log_priordensity
+  return(log_posterior_function)
+}
+```
+
+#2.4 Posterior mode
+
+In this question, we first define a function called posterior_mode. We use 'control = list(fnscale = -1)' in the optim to do maximisation instead of minimisation and use 'hessian = T' to get Hessian. Last, we return in order to get a list with elements mode (the posterior mode location), hessian (the Hessian of the log-density at
+the mode), and S (the inverse of the negated Hessian at the mode).
+
+```{r, echo=FALSE}
+posterior_mode <- function(theta_start, x, y, params) {
+  opt1 <- optim(par = theta_start,
+        fn = log_posterior_density,
+        x = x, y = y, params = params,
+        control = list(fnscale = -1),
+        hessian = T)
+  return(list(
+    mode = opt1$par,
+    hessian = opt1$hessian,
+    S = solve(-opt1$hessian)
+    
+  ))
+}
+```
+
+#2.5 Gaussian approximation
+
+Here, we use the posterior_mode to evaluate the inverse of the negated Hessian at the mode. From the question, $\gamma = 1$ for i = 1,2,3,4, and the theta_start is 0. Since there are 4 i, this means that need to repeat $\gamma = 1$ and $\theta = 0$ 4 times. And last, we output the mode from the gaussian_est and the inverse of the negated Hessian from the gaussian_est, and called them mu and S respectively.
+
+```{r, echo=FALSE}
+gaussian_est <- posterior_mode(
+  theta_start = rep(0, 4),
+  x = filament1$CAD_Weight,
+  y = filament1$Actual_Weight,
+  params = rep(1, 4)
+)
+
+# mu
+gaussian_est$mode
+# S
+gaussian_est$S
+```
+
+#2.6 Importance sampling function
+
+The aim is to construct a 90% Bayesian credible interval for each βj using importance sampling. First, we define a new function called do_importance, through this, the output can be a data.frame with five columns, beta1, beta2, beta3, beta4, log_weights, containing the βi samples and normalised log-importance-weights. Then, draw samples from mvnorm. Then when construct log_weights column, we use the formula: $$wk =p(θ)p(y|θ)/\widetilde p(θ|y) $$ After that we normalize the log_weights column, then return the data frame.
+
+```{r, echo=FALSE}
+library(mvtnorm)
+
+do_importance <- function(N, mu, S, ...) {
+  # draw samples from mvnorm
+  sampl <- rmvnorm(n = N,
+                   mean = mu,
+                   sigma = S)
+  # build data frame
+  df1 <- as.data.frame(sampl)
+  colnames(df1) <- paste0("beta", 1:4)
+  # construct log_weights column
+  df1$log_weights <- 0
+  for (i in 1:nrow(df1)) {
+    df1$log_weights[i] <- log_posterior_density(
+      theta = as.numeric(df1[i, 1:4]),
+      x = filament1$CAD_Weight,
+      y = filament1$Actual_Weight,
+      params = rep(1, 4)) - dmvnorm(x = as.numeric(df1[i, 1:4]), mean = mu, sigma = S, log = T)
+  }
+  # normalize log_weights column using given function
+  log_sum_exp <- function(x) {
+    max_x <- max(x, na.rm = TRUE)
+    max_x + log(sum(exp(x - max_x)))
+  }
+  df1$log_weights <- df1$log_weights - log_sum_exp(df1$log_weights)
+  
+  return(df1)
+}
+```
+
+
+#2.7  Importance sampling
+
+In the last question, we need to plot the empirical weighted CDFs together with the un-weighted CDFs for each parameter. From the problem, we know that N = 10000, thus we can draw 10000 samples. Then plot the graph by ggplot.
+Meanwhile, construct 90% credible intervals for each of the four model parameters, based on the importance sample, and the table is shown below.
+```{r, warning=FALSE}
+# draw 10,000 samples
+set.seed(12345L)
+sample_df <- do_importance(N = 10000, mu = gaussian_est$mode, S = gaussian_est$S)
+
+# plot CDF's
+sample_df %>%
+  mutate(weights = exp(log_weights)) %>%
+  pivot_longer(starts_with("beta")) %>%
+  ggplot() +
+  stat_ewcdf(aes(value, weights = weights, col = "Importance")) +
+  stat_ecdf(aes(value, col = "Unweighted")) +
+  facet_wrap(vars(name), scales = "free_x") +
+  theme_bw() +
+  labs(x = "beta",
+       y = "CDF",
+       color = "")
+```
+```{r}
+sample_df %>%
+  mutate(weights = exp(log_weights)) %>%
+  pivot_longer(starts_with("beta")) %>%
+  group_by(beta = name) %>%
+  summarise(ci_90_lower = wquantile(value, probs = 0.05, weights = weights),
+            ci_90_upper = wquantile(value, probs = 0.95, weights = weights))
+```
+# Discussion
+From the graph we can apparently find that the two lines exhibit a similar trend, indicating that the importance sampling method has effectively captured the shape of the posterior distribution for each parameter. To confirm this, one can refer to the table presenting the credible intervals. For instance, with 90% confidence, we can state that the actual value of $\beta_1$ falls between -0.240 and -0.040. However, the credible interval for $\beta_3$ is wide, indicating significant uncertainty; i.e., $\beta_3$ has a bigger influence on the distribution of $y$. \
+
+In terms of a 3D printer application point of view, the estimates for the parameters imply that there could be notable fluctuations in both the filament diameter and printing temperature. Thus, to decrease the uncertainty from the perspective of the 3D printer application, it may be necessary to collect more data.
+
+# Code appendix
+
+```{r code=readLines("code1.R"), eval=FALSE, echo=TRUE}
+# Do not change this code chunk
+```
