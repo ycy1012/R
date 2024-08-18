@@ -1,0 +1,356 @@
+---
+title: "StatComp Project 2: Scottish weather"
+author: "Your Name (s0000000)"
+output:
+  html_document:
+    number_sections: no
+  pdf_document:
+    number_sections: no
+header-includes:
+  - \newcommand{\bm}[1]{\boldsymbol{#1}}
+  - \newcommand{\mat}[1]{\begin{bmatrix}#1\end{bmatrix}}
+---
+
+```{r setup, include = FALSE}
+# Modify this setup code chunk to set options
+# or add extra packages etc if needed.
+# See the project instructions for more details
+# on what code to show, and where/how.
+
+# Set default code chunk options
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  warning = F,
+  message = F
+)
+
+suppressPackageStartupMessages(library(tidyverse))
+theme_set(theme_bw())
+suppressPackageStartupMessages(library(StatCompLab))
+suppressPackageStartupMessages(library(kableExtra))
+suppressPackageStartupMessages(library(stargazer))
+
+# To give the same random number sequence every time the document is knit:ed,
+# making it easier to discuss the specific numbers in the text:
+set.seed(12345L)
+```
+
+```{r code=readLines("functions.R"), eval=TRUE, echo=FALSE}
+# Do not change this code chunk
+# Load function definitions
+source("functions.R")
+```
+
+
+# Seasonal variability
+
+```{r}
+# load datas
+data(ghcnd_stations, package = "StatCompLab") 
+data(ghcnd_values, package = "StatCompLab")
+
+ghcnd_stations$Name[7] <- "EDINBURGH"
+ghcnd_stations$Name[8] <- "BENMORE"
+```
+
+```{r, echo=FALSE}
+# plot temperature and precipitation
+ghcnd_values %>%
+  filter(Year == 2016) %>%
+  group_by(Year, Month, Day, Element) %>%
+  summarise(value = mean(Value)) %>%
+  ggplot(aes(x = as.Date(paste(Year, Month, Day, sep = "-")), 
+             y = value, color = Element)) +
+  geom_line() +
+  facet_wrap(vars(Element), scales = "free_x", ncol = 1) +
+  labs(x = "Date",
+       y = "Average Value")
+```
+
+We plot the average temperature (TMAX and TMIN) and average precipitation (PRCP) across all the stations in Scotland for the year 2016. We can see from the plot that TMAX and TMIN both have clear seasonal effects; the average temperatures are higher in summer while lower in winter. Besides, the seasonal pattern is more obvious for TMAX, which is generally much less in winter than in summer. However, for precipitation, the seasonal effect is not obvious if any. The average precipitation in 2016 does not have significant difference between in winter and in summer.\
+
+Then we construct a Monte Carlo permutation test for the hypotheses:\
+$H_0$: The rainfall distribution is the same in winter as in summer\
+versus\
+$H_1$: The winter and summer distributions have different expected values\
+
+```{r}
+# add a column for Summer and combine the two data
+ghcnd <- ghcnd_values %>%
+  mutate(Summer = Month %in% 4:9) %>%
+  merge(ghcnd_stations, by = "ID")
+
+df1 <- data.frame()
+
+for (station in ghcnd_stations$Name) {
+  winter_index <- which(
+  ghcnd$Element == "PRCP" & 
+    ghcnd$Summer == F &
+    ghcnd$Name == station
+)
+winter <- ghcnd$Value[winter_index]
+winter_index_n <- length(winter_index)
+
+summer_index <- which(
+  ghcnd$Element == "PRCP" & 
+    ghcnd$Summer == T &
+    ghcnd$Name == station
+)
+summer <- ghcnd$Value[summer_index]
+summer_index_n <- length(summer_index)
+
+all_index <- c(winter_index, summer_index)
+all_index_n <- length(all_index)
+
+t_stat <- abs(mean(winter) - mean(summer))
+t_stat_vec <- c()
+
+for (i in 1:10000) {
+  samp <- sample(all_index_n, winter_index_n)
+  winter_index_mc <- all_index[samp]
+  summer_index_mc <- all_index[-samp]
+  
+  winter_mc <- ghcnd$Value[winter_index_mc]
+  summer_mc <- ghcnd$Value[summer_index_mc]
+  
+  t_stat_mc <- abs(mean(winter_mc) - mean(summer_mc))
+  t_stat_vec <- c(t_stat_vec, t_stat_mc)
+}
+
+df1 <- rbind(
+  df1,
+  data.frame(station_name = station,
+           p_val = mean(t_stat_vec >= t_stat),
+           p_val_ci_lower = 
+             p_value_CI(x = sum(t_stat_vec >= t_stat),
+                        N = 10000)$lower,
+           p_val_ci_upper = 
+             p_value_CI(x = sum(t_stat_vec >= t_stat),
+                        N = 10000)$upper,
+           sd = sd(t_stat_vec >= t_stat)))
+}
+```
+
+The results of the MC permutation test is:
+
+```{r, results='asis', echo=FALSE}
+df1 %>%
+  kbl(digits = 4, format = "html",
+      caption = "Monte Carlo permutation test for each station") %>%
+  kable_styling(full_width = F)
+```
+
+We can see from the table that apart from the stations LEUCHARS and ROYAL BOTANIC GARDE EDINBURGH, all other stations have zero MC p-values and standard deviations. In particular, ROYAL BOTANIC GARDE EDINBURGH has a quite big p value of 0.65 while the p value for LEUCHARS is 0.03, which is less than the significance level of 5\%. Hence, we cannot reject the null hypothesis that the rainfall distribution is the same in winter as in summer for station ROYAL BOTANIC GARDE EDINBURGH because its MC p-value is greater than the significance level of 5\%; however, for all other 7 weather stations, we can conclude that the winter and summer distributions have different expected values, i.e., the winter and summer precipitation are not mutually exchangeable for them.
+
+# Spatial weather prediction
+
+## Estimation and prediction
+```{r}
+# transform data for regression analysis
+ghcnd_month <- ghcnd_values %>%
+  filter(Element == "PRCP") %>%
+  group_by(ID, Year, Month) %>%
+  summarise(Value_sqrt_avg = sqrt(mean(Value)),
+            DecYear = mean(DecYear)) %>%
+  ungroup() %>%
+  merge(ghcnd_stations, by = "ID")
+
+m0 <- precipitation_estimate(k = 0)
+m1 <- precipitation_estimate(k = 1)
+m2 <- precipitation_estimate(k = 2)
+m3 <- precipitation_estimate(k = 3)
+m4 <- precipitation_estimate(k = 4)
+```
+
+\newpage
+```{r, results='asis', echo=F}
+stargazer(m0, m1, m2, m3, m4,
+          type = "html", header = F,
+          omit.stat = c("f", "ser"),
+          title =
+            "Estimation of monthly averaged precipitation value in Scotland",
+          dep.var.labels.include = F,
+          dep.var.caption = "Value.sqrt.avg",
+          covariate.labels = 
+            c("Longitude", "Latitude", "Elevation", "DecYear",
+            "cos.freq.1", "sin.freq.1",
+            "cos.freq.2", "sin.freq.2",
+            "cos.freq.3", "sin.freq.3",
+            "cos.freq.4", "sin.freq.4"),
+          column.labels = 
+            c("M0", "M1", "M2", "M3", "M4"))
+```
+
+\newpage
+We can see from the regression results that the estimated coefficients for the first four variables (`Longitude`, `Latitude`, `Elevation` and `DecYear`) are all quite similar among the five models. The estimated coefficients for long and lat are both negative and significant. And those for elevation and year are positive and significant.
+
+## Assessment: Station and season differences
+
+For each weather station, we first estimate the models from the subset data without this station, and then make prediction of `Value_sqrt_avg` on the subset data with this station only. So we can get the prediction scores (SE and DS scores) for each station in terms of each model (M0 to M4). We take average of each type of scores to get the average assessment score for each model-station and present them in the table and plot. And for the assessment scores for season differences, we do the same procedures in terms of each model and month instead of station.
+
+
+```{r}
+df_assessment_station <- data.frame()
+
+for (name in ghcnd_stations$Name) {
+  df <- data.frame()
+  for (i in 0:4) {
+    mm0 <- precipitation_estimate(k = i, subset = (ghcnd_month$Name != name))
+  
+    pred_m0 <- predict(mm0,
+                     newdata = ghcnd_month %>% 
+                       filter(Name == name),
+                     se.fit = T)
+ 
+    score_m0_se <- proper_score("se", 
+                           obs = ghcnd_month$Value_sqrt_avg[
+                             ghcnd_month$Name == name
+                           ],
+                           mean = pred_m0$fit) %>%
+       mean()
+
+     score_m0_ds <- proper_score("ds", 
+                           obs = ghcnd_month$Value_sqrt_avg[
+                             ghcnd_month$Name == name
+                           ],
+                           mean = pred_m0$fit,
+                           sd = sqrt(pred_m0$se.fit ^ 2 +
+                                       sum(mm0$residuals ^ 2) /
+                                       mm0$df.residual)) %>%
+       mean()
+     
+     df <- rbind(df, data.frame(
+       model = paste0("M", i),
+       score_SE = score_m0_se,
+       score_DS = score_m0_ds
+     ))
+  }
+  
+  df_assessment_station <- rbind(
+    df_assessment_station,
+    df %>%
+      mutate(station_name = name)
+  )
+}
+```
+
+```{r, echo=FALSE, results='asis'}
+df_assessment_station %>%
+  pivot_wider(names_from = "model",
+              values_from = 2:3) %>%
+  select(1, 2:6) %>%
+  kbl(digits = 4, format = "html",
+      caption = "Assessment: Station (SE scores)") %>%
+  kable_styling(full_width = F)
+df_assessment_station %>%
+  pivot_wider(names_from = "model",
+              values_from = 2:3) %>%
+  select(1, 7:11) %>%
+  kbl(digits = 2, format = "html",
+      caption = "Assessment: Station (DS scores)") %>%
+  kable_styling(full_width = F)
+```
+
+```{r, echo=FALSE}
+df_assessment_station %>%
+  pivot_longer(2:3) %>%
+  ggplot(aes(x = station_name, y = value, fill = model)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  facet_wrap(vars(name), scales = "free_y",
+             ncol = 1) +
+  theme(axis.text.x = element_text(
+    angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(x = "Staion",
+       y = "Scores",
+       title = "Assessment: Station")
+```
+
+We can see from the above table and plot that the score assessments are not equally good at predicting the different stations. For Dawid-Sebastiani scores, station BENMORE has the highest and the only positive value and for Squared Error, BENMORE has a extremely big score while the others do not differ a lot. Besides, generally the higher frequency models (M1 to M4) have less scores than M0, for each station.
+
+```{r}
+df_assessment_month <- data.frame()
+
+for (mon in 1:12) {
+  df <- data.frame()
+  for (i in 0:4) {
+    mm0 <- precipitation_estimate(k = i, subset = (ghcnd_month$Month != mon))
+  
+    pred_m0 <- predict(mm0,
+                     newdata = ghcnd_month %>% 
+                       filter(Month == mon),
+                     se.fit = T)
+ 
+    score_m0_se <- proper_score("se", 
+                           obs = ghcnd_month$Value_sqrt_avg[
+                             ghcnd_month$Month == mon
+                           ],
+                           mean = pred_m0$fit) %>%
+       mean()
+     score_m0_ds <- proper_score("ds", 
+                           obs = ghcnd_month$Value_sqrt_avg[
+                             ghcnd_month$Month == mon
+                           ],
+                           mean = pred_m0$fit,
+                           sd = sqrt(pred_m0$se.fit ^ 2 +
+                                       sum(mm0$residuals ^ 2) /
+                                       mm0$df.residual)) %>%
+       mean()
+     
+     df <- rbind(df, data.frame(
+       model = paste0("M", i),
+       score_SE = score_m0_se,
+       score_DS = score_m0_ds
+     ))
+  }
+  
+  df_assessment_month <- rbind(
+    df_assessment_month,
+    df %>%
+      mutate(month = mon)
+  )
+}
+```
+
+```{r, echo=FALSE, results='asis'}
+df_assessment_month %>%
+  pivot_wider(names_from = "model",
+              values_from = 2:3) %>%
+  select(1, 2:6) %>%
+  kbl(digits = 4, format = "html",
+      caption = "Assessment: Month (SE scores)") %>%
+  kable_styling(full_width = F)
+df_assessment_month %>%
+  pivot_wider(names_from = "model",
+              values_from = 2:3) %>%
+  select(1, 7:11) %>%
+  kbl(digits = 4, format = "html",
+      caption = "Assessment: Month (DS scores)") %>%
+  kable_styling(full_width = F)
+```
+
+```{r, echo=FALSE}
+df_assessment_month %>%
+  pivot_longer(2:3) %>%
+  ggplot(aes(x = factor(month), 
+             y = value, 
+             fill = model)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  facet_wrap(vars(name), scales = "free_y",
+             ncol = 1) +
+  labs(x = "Month",
+       y = "Scores",
+       title = "Assessment: Month")
+```
+
+As for assessment in season differences, same as station assessment, generally the higher frequency models (M1 to M4) have less scores than M0 for each station. Besides, we can easily see from the bar plot that for both Squared Error and Dawid-Sebastiani scores, there are obvious U-shaped pattern for each model; i.e., generally the scores are lower in summer and higher in winter. Hence we can conclude that the models perform better when predicting precipitation in summer compared to in winter.
+
+# Code appendix
+
+
+## Function definitions
+
+```{r code=readLines("functions.R"), eval=FALSE, echo=TRUE}
+# Do not change this code chunk
+```
+
