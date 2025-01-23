@@ -1,4 +1,4 @@
-# Chenyao Yu (s2156882)
+# Chenyao Yu (s2156882) trytrt
 
 # Place your function definitions that may be needed in the report.Rmd, including function documentation.
 # You can also include any needed library() calls here
